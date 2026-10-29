@@ -5,7 +5,7 @@ package.domain = gr.poiotita
 source.dir = .
 source.include_exts = py
 source.exclude_dirs = .github, bin, .buildozer
-version = 1.5
+version = 1.6
 requirements = python3,kivy==2.3.1,certifi,android,libzbar,pyzbar
 orientation = portrait
 fullscreen = 0

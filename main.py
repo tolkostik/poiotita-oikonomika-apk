@@ -20,10 +20,10 @@ from kivy.utils import platform
 import food as F
 import products as P
 import lists as L
+import ui_extra as UX
 import health as H
 
 IS_ANDROID = platform == "android"
-Window.clearcolor = (0.955, 0.96, 0.955, 1)
 GREY = "#6B7486"
 ALERT_BG = {"red": [0.75, 0.15, 0.12, 1], "orange": [0.9, 0.5, 0.05, 1]}
 LIGHT = {"χαμηλή": "#0F7B4F", "μέτρια": "#C98A00", "υψηλή": "#B4461B"}
@@ -354,6 +354,13 @@ KV = """
                     spacing: dp(4)
                     padding: dp(8), dp(8)
         Screen:
+            name: 'guide'
+            BoxLayout:
+                id: guide_box
+                orientation: 'vertical'
+                padding: dp(20), dp(20)
+                spacing: dp(12)
+        Screen:
             name: 'more'
             ScrollView:
                 do_scroll_x: False
@@ -397,6 +404,34 @@ KV = """
                     height: self.minimum_height
                     spacing: dp(6)
                     padding: dp(6), dp(10)
+    BoxLayout:
+        id: undo_bar
+        size_hint_y: None
+        height: 0
+        opacity: 0
+        padding: dp(8), dp(4)
+        spacing: dp(8)
+        canvas.before:
+            Color:
+                rgba: 0.2, 0.22, 0.27, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        Label:
+            id: undo_lbl
+            text: ''
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+        Button:
+            id: undo_btn
+            text: 'ΑΝΑΙΡΕΣΗ'
+            bold: True
+            size_hint_x: None
+            width: dp(120)
+            background_normal: ''
+            background_color: 0.95, 0.71, 0.14, 1
+            color: 0.11, 0.14, 0.2, 1
     BoxLayout:
         size_hint_y: None
         height: dp(56)
@@ -442,7 +477,6 @@ class Root(BoxLayout):
     pass
 
 
-Builder.load_string(KV)
 
 
 # ------------------------------------------------------------------ προστασία από κλεισίματα
@@ -473,6 +507,7 @@ class PoiotitaApp(App):
 
     def build(self):
         F.set_dir(self.user_data_dir)
+        Builder.load_string(UX.apply_ui(KV))     # θέμα και μέγεθος γραμμάτων πριν φτιαχτεί η οθόνη
         self.root_w = Root()
         self.root_w.ids.sm.transition = NoTransition()
         self.camera = None
@@ -497,6 +532,11 @@ class PoiotitaApp(App):
         if exp or soon:
             parts = ([f"{exp} έληξαν"] if exp else []) + ([f"{soon} λήγουν σύντομα"] if soon else [])
             self.root_w.ids.scan_status.text = "Ντουλάπι: " + ", ".join(parts) + " (δες την καρτέλα Ντουλάπι)"
+        ids = self.root_w.ids
+        self.undo = UX.Undo(ids.undo_bar, ids.undo_lbl, ids.undo_btn)
+        self._price_msgs = []
+        if not UX.ui_settings().get("guide_seen"):
+            Clock.schedule_once(lambda dt: self.show_guide(0), 0.3)
         return self.root_w
 
     def on_pause(self):
@@ -901,7 +941,7 @@ class PoiotitaApp(App):
         info = P.user_info(code)
         box.add_widget(Factory.Txt(text="[b]Η δική μου βαθμολογία[/b]"))
         row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8), padding=(dp(10), 0))
-        lab = Label(text=gr(info["rating"]) if info.get("rating") is not None else "–", color=(0.11, 0.14, 0.2, 1),
+        lab = Label(text=gr(info["rating"]) if info.get("rating") is not None else "–", color=UX.INK,
                     bold=True, font_size="20sp", size_hint_x=None, width=dp(56))
         sl = Factory.Slider(min=1, max=10, step=0.1, value=info.get("rating") or 5)
 
@@ -1074,6 +1114,64 @@ class PoiotitaApp(App):
         self.root_w.ids.sm.current = "add"
 
 
+
+    # ------------------------------------------------------------ εμφάνιση / οδηγός
+    def _appearance(self, box):
+        from kivy.factory import Factory
+        u = UX.ui_settings()
+        box.add_widget(Factory.Txt(text="[size=16sp][b]Εμφάνιση[/b][/size]"))
+        r1 = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        r1.add_widget(Label(text="Γράμματα", color=UX.INK, size_hint_x=0.4))
+        fs = Factory.Spinner(text=u["font"], values=list(UX.FONT_SCALES))
+        r1.add_widget(fs)
+        box.add_widget(r1)
+        r2 = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        r2.add_widget(Label(text="Θέμα", color=UX.INK, size_hint_x=0.4))
+        th = Factory.Spinner(text="Σκοτεινό" if u["theme"] == "dark" else "Φωτεινό", values=["Φωτεινό", "Σκοτεινό"])
+        r2.add_widget(th)
+        box.add_widget(r2)
+        note = Factory.Txt(text="")
+        box.add_widget(note)
+
+        def changed(*a):
+            UX.save_ui(font=fs.text, theme="dark" if th.text == "Σκοτεινό" else "light")
+            note.text = ("[color=#C98A00]Αποθηκεύτηκε. Θα εφαρμοστεί όταν ξανανοίξεις την εφαρμογή.[/color]")
+            if not getattr(self, "_restart_btn", None):
+                self._restart_btn = Factory.Button(text="ΚΛΕΙΣΙΜΟ ΤΩΡΑ (για να εφαρμοστεί)", size_hint_y=None,
+                                                   height=dp(48))
+                self._restart_btn.bind(on_release=lambda *x: self.stop())
+                box.add_widget(self._restart_btn)
+        fs.bind(text=changed)
+        th.bind(text=changed)
+        self._restart_btn = None
+
+    def show_guide(self, i):
+        from kivy.factory import Factory
+        box = self.root_w.ids.guide_box
+        box.clear_widgets()
+        self._set_camera(False)
+        title, text = UX.GUIDE[i]
+        box.add_widget(Label(text=f"[b]{esc(title)}[/b]", markup=True, font_size="24sp", color=UX.INK,
+                             size_hint_y=None, height=dp(60)))
+        box.add_widget(Factory.Txt(text=f"[size=17sp]{esc(text)}[/size]"))
+        box.add_widget(Label(text=f"{i + 1} / {len(UX.GUIDE)}", color=UX.INK, size_hint_y=None, height=dp(30)))
+        from kivy.uix.widget import Widget
+        box.add_widget(Widget())
+        row = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(10))
+        skip = Factory.Button(text="Παράλειψη")
+        nxt = Factory.Button(text="Επόμενο" if i < len(UX.GUIDE) - 1 else "Ξεκινάμε!", bold=True,
+                             background_normal="", background_color=(0.95, 0.71, 0.14, 1), color=(0.11, 0.14, 0.2, 1))
+
+        def finish(*a):
+            UX.save_ui(guide_seen=True)
+            self.go("scan")
+        skip.bind(on_release=finish)
+        nxt.bind(on_release=lambda *a: self.show_guide(i + 1) if i < len(UX.GUIDE) - 1 else finish())
+        row.add_widget(skip)
+        row.add_widget(nxt)
+        box.add_widget(row)
+        self.root_w.ids.sm.current = "guide"
+
     # ------------------------------------------------------------ φακός
     def toggle_torch(self, force=None):
         on = (not self.torch_on) if force is None else force
@@ -1116,6 +1214,10 @@ class PoiotitaApp(App):
                                color=(0.11, 0.14, 0.2, 1) if target == "profile" else (1, 1, 1, 1))
             b.bind(on_release=lambda w, t=target: self.show_profile() if t == "profile" else self.go(t))
             box.add_widget(b)
+        g = Factory.Button(text="Οδηγός χρήσης", size_hint_y=None, height=dp(52))
+        g.bind(on_release=lambda *a: self.show_guide(0))
+        box.add_widget(g)
+        self._appearance(box)
 
     # ------------------------------------------------------------ λίστα αγορών
     def show_shop(self):
@@ -1162,24 +1264,26 @@ class PoiotitaApp(App):
         for it in items:
             r = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(4))
             cb = Factory.CheckBox(active=it.get("done", False), size_hint_x=None, width=dp(44),
-                                  color=(0.11, 0.14, 0.2, 1))
+                                  color=UX.INK)
             cb.bind(active=lambda w, v, iid=it["id"]: L.shop_update(iid, done=bool(v)))
             sc = f" · {gr(it['score'])}/10" if it.get("score") is not None else ""
             lab = Label(text=f"[b]{esc(it['name'])}[/b]\n[size=12sp]x{it.get('qty', 1)}{sc}[/size]", markup=True,
-                        color=(0.11, 0.14, 0.2, 1) if not it.get("done") else (0.6, 0.62, 0.66, 1),
+                        color=UX.INK if not it.get("done") else (0.6, 0.62, 0.66, 1),
                         halign="left", valign="middle", text_size=(Window.width - dp(200), None))
             minus = Factory.Button(text="−", size_hint_x=None, width=dp(44))
             plus = Factory.Button(text="+", size_hint_x=None, width=dp(44))
             rm = Factory.Button(text="x", size_hint_x=None, width=dp(44))
             minus.bind(on_release=lambda w, i=it: (L.shop_update(i["id"], qty=i.get("qty", 1) - 1), self.show_shop()))
             plus.bind(on_release=lambda w, i=it: (L.shop_update(i["id"], qty=i.get("qty", 1) + 1), self.show_shop()))
-            rm.bind(on_release=lambda w, i=it: (L.shop_remove(i["id"]), self.show_shop()))
+            rm.bind(on_release=lambda w, i=it: self.undo.run(["shopping.json"], f"Αφαιρέθηκε: {i['name'][:30]}",
+                                                             lambda: L.shop_remove(i["id"]), self.show_shop))
             for w in (cb, lab, minus, plus, rm):
                 r.add_widget(w)
             box.add_widget(r)
         if items:
             clr = Factory.Button(text="Αφαίρεση όσων αγόρασα (τσεκαρισμένα)", size_hint_y=None, height=dp(48))
-            clr.bind(on_release=lambda *a: (L.shop_clear_done(), self.show_shop()))
+            clr.bind(on_release=lambda *a: self.undo.run(["shopping.json"], "Αφαιρέθηκαν όσα αγόρασες",
+                                                         L.shop_clear_done, self.show_shop))
             box.add_widget(clr)
             sh = Factory.Button(text="ΚΟΙΝΟΠΟΙΗΣΗ ΛΙΣΤΑΣ", bold=True, size_hint_y=None, height=dp(50),
                                 background_normal="", background_color=(0.15, 0.39, 0.79, 1))
@@ -1208,8 +1312,10 @@ class PoiotitaApp(App):
             use = Factory.Button(text="Το\nκατανάλωσα", halign="center", size_hint_x=None, width=dp(96),
                                  font_size="12sp")
             rm = Factory.Button(text="x", size_hint_x=None, width=dp(44))
-            use.bind(on_release=lambda w, iid=it["id"]: (L.pantry_use_one(iid), self.show_pantry()))
-            rm.bind(on_release=lambda w, iid=it["id"]: (L.pantry_remove(iid), self.show_pantry()))
+            use.bind(on_release=lambda w, i=it: self.undo.run(["pantry.json"], f"Καταναλώθηκε: {i['name'][:30]}",
+                                                              lambda: L.pantry_use_one(i["id"]), self.show_pantry))
+            rm.bind(on_release=lambda w, i=it: self.undo.run(["pantry.json"], f"Διαγράφηκε: {i['name'][:30]}",
+                                                             lambda: L.pantry_remove(i["id"]), self.show_pantry))
             for w in (lab, use, rm):
                 r.add_widget(w)
             box.add_widget(r)
@@ -1273,9 +1379,9 @@ class PoiotitaApp(App):
         def row(key, label):
             r = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
             cb = Factory.CheckBox(active=key in prof.get("allergens", []) + prof.get("diets", []),
-                                  size_hint_x=None, width=dp(46), color=(0.11, 0.14, 0.2, 1))
+                                  size_hint_x=None, width=dp(46), color=UX.INK)
             r.add_widget(cb)
-            r.add_widget(Label(text=label, color=(0.11, 0.14, 0.2, 1), halign="left", valign="middle",
+            r.add_widget(Label(text=label, color=UX.INK, halign="left", valign="middle",
                                text_size=(Window.width - dp(90), None)))
             box.add_widget(r)
             checks[key] = cb
@@ -1374,7 +1480,8 @@ class PoiotitaApp(App):
             box.add_widget(bt)
         clr = Factory.Button(text="ΝΕΑ ΣΥΓΚΡΙΣΗ", bold=True, size_hint_y=None, height=dp(50), background_normal="",
                              background_color=(0.36, 0.25, 0.6, 1))
-        clr.bind(on_release=lambda *x: (H.clear_compare(), self.show_compare()))
+        clr.bind(on_release=lambda *x: self.undo.run(["compare.json"], "Η σύγκριση καθαρίστηκε",
+                                                     H.clear_compare, self.show_compare))
         box.add_widget(clr)
 
     # ------------------------------------------------------------ τιμές
@@ -1393,7 +1500,16 @@ class PoiotitaApp(App):
                         f"[b]{euro(r['price'])}[/b]{unit} [size=12sp]({r['date']})[/size]{star}")
         else:
             txt += "\nΚαμία ακόμα. Γράψε την τιμή που βλέπεις στο ράφι ή στο e-katanalotis."
+        msgs, self._price_msgs = getattr(self, "_price_msgs", []), []
+        for kind, m in msgs:
+            col = {"up": [0.75, 0.15, 0.12, 1], "down": [0.06, 0.48, 0.31, 1], "best": [0.06, 0.48, 0.31, 1]}[kind]
+            head = {"up": "ΑΚΡΙΒΥΝΕ", "down": "ΦΘΗΝΥΝΕ", "best": "ΚΑΛΥΤΕΡΗ ΤΙΜΗ"}[kind]
+            box.add_widget(Banner(text=f"[b]{head}[/b]\n{esc(m)}", bg=col))
         box.add_widget(Factory.Txt(text=txt))
+        chart = UX.chart_block(p.get("code"))
+        if chart is not None:
+            box.add_widget(Factory.Txt(text="[b]Ιστορικό τιμών[/b]"))
+            box.add_widget(chart)
         row1 = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6), padding=(dp(8), 0))
         store = Factory.Spinner(text=F.get_setting("store", F.STORES[0]), values=F.STORES, size_hint_x=0.55)
         reg = Factory.TextInput(text=region, hint_text="Περιοχή", multiline=False, size_hint_x=0.45)
@@ -1411,7 +1527,7 @@ class PoiotitaApp(App):
                 return
             F.set_setting("store", store.text)
             F.set_setting("region", reg.text.strip())
-            F.add_price(p, store.text, reg.text.strip(), v)
+            self._price_msgs = F.add_price(p, store.text, reg.text.strip(), v)
             self.show_result(p, record=False)
         save.bind(on_release=do_save)
         row2.add_widget(price)
@@ -1463,7 +1579,7 @@ class PoiotitaApp(App):
 
         def field(key, label, numeric=False, hint=""):
             row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
-            row.add_widget(Label(text=label, color=(0.11, 0.14, 0.2, 1), halign="left", valign="middle",
+            row.add_widget(Label(text=label, color=UX.INK, halign="left", valign="middle",
                                  text_size=(Window.width * 0.45, None), size_hint_x=0.5))
             ti = Factory.TextInput(multiline=False, hint_text=hint, size_hint_x=0.5,
                                    input_filter="float" if numeric else None)
@@ -1473,7 +1589,7 @@ class PoiotitaApp(App):
 
         def choice(key, label, values, default):
             row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
-            row.add_widget(Label(text=label, color=(0.11, 0.14, 0.2, 1), halign="left", valign="middle",
+            row.add_widget(Label(text=label, color=UX.INK, halign="left", valign="middle",
                                  text_size=(Window.width * 0.45, None), size_hint_x=0.5))
             sp = Factory.Spinner(text=default, values=values, size_hint_x=0.5)
             row.add_widget(sp)

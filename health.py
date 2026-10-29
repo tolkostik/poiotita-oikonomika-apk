@@ -52,7 +52,7 @@ def load_profile():
 
 def save_profile(prof):
     F.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (F.DATA_DIR / PROFILE_FILE).write_text(json.dumps(prof, ensure_ascii=False), encoding="utf-8")
+    F._save(PROFILE_FILE, prof)
 
 
 def _nut(p, key):
@@ -275,9 +275,9 @@ def add_compare(p):
     lst.append(p)
     lst = lst[-2:]
     F.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (F.DATA_DIR / "compare.json").write_text(json.dumps(lst, ensure_ascii=False), encoding="utf-8")
+    F._save("compare.json", lst)
     return lst
 
 
 def clear_compare():
-    (F.DATA_DIR / "compare.json").write_text("[]", encoding="utf-8")
+    F._save("compare.json", [])

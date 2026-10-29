@@ -294,10 +294,7 @@ def verdict(s):
 
 # ------------------------------------------------------------------ ιστορικό
 def load_history():
-    try:
-        return json.loads((DATA_DIR / "history.json").read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return []
+    return _load("history.json", [])
 
 
 def add_history(p, s):
@@ -305,7 +302,7 @@ def add_history(p, s):
     h.insert(0, {"code": p.get("code"), "name": name_of(p), "score": s,
                  "when": datetime.datetime.now().strftime("%d/%m %H:%M")})
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "history.json").write_text(json.dumps(h[:200], ensure_ascii=False), encoding="utf-8")
+    _save("history.json", h[:200])
 
 
 # ------------------------------------------------------------------ Nutri-Score από την ετικέτα
@@ -367,16 +364,28 @@ def category_of(p):
 
 
 # ------------------------------------------------------------------ δικά μου προϊόντα
+import os as _os
+import threading as _threading
+
+_IO_LOCK = _threading.RLock()
+
+
 def _load(name, default):
-    try:
-        return json.loads((DATA_DIR / name).read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return default
+    with _IO_LOCK:
+        try:
+            return json.loads((DATA_DIR / name).read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return default
 
 
 def _save(name, data):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / name).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    """Ασφαλής εγγραφή: πρώτα σε προσωρινό αρχείο και μετά αντικατάσταση, με κλείδωμα για τα παράλληλα νήματα.
+    Έτσι ένα αρχείο δεν «χαλάει» ποτέ μισογραμμένο, ακόμα κι αν κλείσει απότομα η εφαρμογή."""
+    with _IO_LOCK:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = DATA_DIR / (name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        _os.replace(tmp, DATA_DIR / name)
 
 
 def local_product(code):
@@ -413,13 +422,58 @@ STORES = ["ΑΒ Βασιλόπουλος", "Σκλαβενίτης", "Lidl", "My
 
 
 def add_price(p, store, region, price):
+    """Καταγράφει τιμή. Επιστρέφει λίστα μηνυμάτων (ακρίβυνε/φθήνυνε/χαμηλότερη που έχεις δει)."""
+    price = round(float(price), 2)
+    code = p.get("code")
     prices = _load("prices.json", [])
-    prices = [x for x in prices if not (x["code"] == p.get("code") and x["store"] == store
-                                        and x.get("region", "") == region)]
-    prices.append({"code": p.get("code"), "name": name_of(p), "category": category_of(p),
-                   "score": score(p)[0], "store": store, "region": region, "price": round(float(price), 2),
-                   "date": datetime.datetime.now().strftime("%d/%m/%Y")})
+    old_same = next((x for x in prices if x["code"] == code and x["store"] == store
+                     and x.get("region", "") == region), None)
+    hist = price_history(code)
+    msgs = []
+
+    def e(x):
+        return f"{x:.2f}".replace(".", ",") + " €"
+    if old_same and abs(old_same["price"] - price) >= 0.01:
+        diff = price - old_same["price"]
+        pct = diff / old_same["price"] * 100 if old_same["price"] else 0
+        word = "ακρίβυνε" if diff > 0 else "φθήνυνε"
+        msgs.append(("up" if diff > 0 else "down",
+                     f"Στο {store} {word} κατά {e(abs(diff))} ({pct:+.0f}%) από την τελευταία φορά "
+                     f"({e(old_same['price'])}, {old_same['date']})."))
+    if hist:
+        lo = min(h["price"] for h in hist)
+        if price < lo - 0.005:
+            msgs.append(("best", f"Η χαμηλότερη τιμή που έχεις δει ποτέ για αυτό το προϊόν (πριν: {e(lo)})."))
+        elif price > lo * 1.15:
+            msgs.append(("up", f"Είναι {((price / lo) - 1) * 100:.0f}% πάνω από τη χαμηλότερη που έχεις δει "
+                               f"({e(lo)})."))
+    prices = [x for x in prices if x is not old_same]
+    now = datetime.datetime.now()
+    prices.append({"code": code, "name": name_of(p), "category": category_of(p),
+                   "score": score(p)[0], "store": store, "region": region, "price": price,
+                   "date": now.strftime("%d/%m/%Y")})
     _save("prices.json", prices)
+    allh = _load("price_history.json", [])
+    allh.append({"code": code, "store": store, "region": region, "price": price, "t": now.strftime("%Y-%m-%d")})
+    _save("price_history.json", allh[-5000:])
+    return msgs
+
+
+def price_history(code):
+    """Όλες οι τιμές που έχουν καταγραφεί για ένα προϊόν, με χρονική σειρά (και οι παλιές καταγραφές)."""
+    out = [h for h in _load("price_history.json", []) if h["code"] == code]
+    have = {(h["store"], h.get("region", ""), h["t"]) for h in out}
+    for x in _load("prices.json", []):           # τιμές από παλαιότερες εκδόσεις χωρίς ιστορικό
+        if x["code"] != code:
+            continue
+        try:
+            t = datetime.datetime.strptime(x["date"], "%d/%m/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+        if (x["store"], x.get("region", ""), t) not in have:
+            out.append({"code": code, "store": x["store"], "region": x.get("region", ""), "price": x["price"],
+                        "t": t})
+    return sorted(out, key=lambda h: h["t"])
 
 
 def delete_price(code, store, region):
